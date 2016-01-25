@@ -108,13 +108,13 @@ out.println("""  </Lexicon>
       val pos = items(0).pos 
       out.print(s"""
     <LexicalEntry id="${urlencode(id + "-" + lemma_key)}">
-      <Lemma writtenForm="${escapeXml(lemma)}" pos="${pos.shortForm}"/>""")
+      <Lemma writtenForm="${escapeXml(lemma)}" partOfSpeech="${pos.shortForm}"/>""")
       for(WordNetDataItem(offset, lexNo, pos, lemmas, pointers, frames, gloss) <- items) {
         val word = lemmas.find(_.lemma == lemma).get
         val srcIdx = word.synNo
         out.print(s"""
       <Sense id="${"%s-%08d-%s-%d" format (id, offset, pos.shortForm, srcIdx)}"
-             synset="${"%s-$08d-%s" format (id, offset, pos.shortForm)}">""")
+             synset="${"%s-%08d-%s" format (id, offset, pos.shortForm)}">""")
         for(Pointer(typ, targetOffset, pos, src, trg) <- pointers if srcIdx == src) {
           out.print(s"""
         <SenseRelation target="${"%s-%08d-%s-%d" format (id, targetOffset, pos.shortForm, trg)}" relType="${typ.name}"/>""")
@@ -145,7 +145,7 @@ out.println("""  </Lexicon>
       out.print(s"""
     <Synset id="${"%s-%08d-%s" format (id, offset, pos.shortForm)}"
             ili="${iliId}">
-      <Definition gloss="${escapeXml(gloss)}"/>""")
+      <Definition gloss="${escapeXml(gloss)}" iliDef=\"${if(iliId == "in") { escapeXml(gloss) } else { "" }}\"/>""")
          
         for(Pointer(typ, targetOffset, pos, src, trg) <- pointers if typ.semantic && src == 0 && trg == 0) yield {
           out.print(s"""
