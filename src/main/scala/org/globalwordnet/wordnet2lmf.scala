@@ -1,4 +1,4 @@
-package net.lemonmodel.wordnet
+package org.globalword.wndb2lmf
 
 import scala.io.{Source}
 import scala.xml.{NodeSeq,Elem,Null,TopScope,PrefixedAttribute}
@@ -7,18 +7,19 @@ import java.io.{PrintWriter,File}
 import org.apache.commons.lang3.StringEscapeUtils.{escapeXml10 => escapeXml}
 
 object wordnet2lemon {
-  
+
   def main(args : Array[String]) {
     val wnFolder = if(args.length == 0) {
-      "/usr/share/wordnet/"
+      "/home/jmccrae/Downloads/dict/"
+//      "/home/jmccrae/Downloads/WordNet-3.0/dict/"
     } else {
       args(0)
     }
 
-    val (wnid, title, language, output) = if(args.length == 5) {
-      (args(0), args(1), args(2), args(3))
+    val (wnid, title, language, iliRef, output) = if(args.length == 5) {
+      (args(0), args(1), args(2), args(3), args(4))
     } else {
-      ("wn31", "WordNet", "en", "wn31.xml")
+      ("wn31", "WordNet", "en", "../ili/ili-wn31.ttl", "wn31.xml")
     }
 
     
@@ -36,6 +37,7 @@ object wordnet2lemon {
     val excAdvs = excForms(wnFolder + "adv.exc")
     val sentences = loadSentences(wnFolder + "sents.vrb")
     
+    val iliMap = loadILIMap(iliRef)
     
     val items = words("verb").toSeq ++ words("noun").toSeq ++ words("adj").toSeq ++ words("adv").toSeq
     
@@ -45,9 +47,11 @@ object wordnet2lemon {
 
     //val senseIdx = buildIndex(items, satellites)
     val out = new PrintWriter(output)
-    buildLMF(out, items, wnid, title, language, sentences)
+    buildLMF(out, items, wnid, title, language, sentences, iliMap)
     out.flush
     out.close
+
+//    dumpDefinitions(items)
   }
   
   def excForms(file : String) : Map[String,Seq[(String,String)]] = {
@@ -75,12 +79,13 @@ object wordnet2lemon {
   ).flatten.toMap
 
   def buildLMF(out : PrintWriter, items : Seq[WordNetDataItem], id : String, 
-    label : String, language : String, sentences : Map[Int, String]) {
+    label : String, language : String, sentences : Map[Int, String],
+    ili : Map[(Int, String), String]) {
     out.print(s"""<LexicalResource>
   <Lexicon id="$id" label="$label" language="$language">""")
 
-    //buildEntries(out, items, id, sentences)
-    buildSynsets(out, items, id, language)
+    buildEntries(out, items, id, sentences)
+    buildSynsets(out, items, id, language, ili)
 out.println("""  </Lexicon>
 </LexicalResource>""")
   }
@@ -127,11 +132,19 @@ out.println("""  </Lexicon>
     }
   }
 
-  def buildSynsets(out : PrintWriter, items : Seq[WordNetDataItem], id : String, language : String)  {
-    for(WordNetDataItem(offset, lexNo, pos, _, pointers, frames, gloss) <- items) {
+  def buildSynsets(out : PrintWriter, items : Seq[WordNetDataItem], id : String, language : String,
+      ili : Map[(Int, String), String])  {
+    for(WordNetDataItem(offset, lexNo, pos, lemmas, pointers, frames, gloss) <- items) {
+      val iliId = ili.get((offset, pos.shortForm)) match {
+        case Some(id) =>
+          id
+        case None =>
+          System.err.println("new,,,%08d-%s,%s" format (offset, pos.shortForm, lemmas.map(_.lemma).mkString("/")))
+          "in"
+      }
       out.print(s"""
     <Synset id="${"%s-%08d-%s" format (id, offset, pos.shortForm)}"
-            ili="">
+            ili="${iliId}">
       <Definition gloss="${escapeXml(gloss)}"/>""")
          
         for(Pointer(typ, targetOffset, pos, src, trg) <- pointers if typ.semantic && src == 0 && trg == 0) yield {
@@ -153,6 +166,33 @@ out.println("""  </Lexicon>
       val (id, sentence) = line.splitAt(line.indexOf(" "))
       id.toInt -> sentence.drop(1)
     }).toMap
+  }
+
+  def loadILIMap(fileName : String) : Map[(Int, String), String] = {
+    (io.Source.fromFile(fileName).getLines.drop(5).flatMap { line =>
+      val elems = line.split("\\s+")
+      val ili = elems(0).drop(4)
+      val offset = elems(2).drop(7).dropRight(2).toInt
+      val pos = elems(2).takeRight(1)
+      if(elems(1) == "owl:sameAs") {
+        if(pos == "s") {
+          Some((offset, "a") -> ili)
+        } else {
+          Some((offset, pos) -> ili)
+        }
+      } else {
+        None
+      }
+    }).toMap
+  }
+
+  def dumpDefinitions(items : Seq[WordNetDataItem]) {
+    val out = new java.io.PrintWriter("defs-wn30.csv")
+    for(WordNetDataItem(offset, _, pos, _, _, _, gloss) <- items) {
+      out.println("%s,%08d,%s" format (gloss.replaceAll(",",""), offset, pos.shortForm))
+    }
+    out.flush
+    out.close
   }
 }
 
@@ -206,7 +246,7 @@ object WordNetDataItem {
   def fromString(s : String) = s.split("\\| ") match {
     case Array(data,gloss) => {
       readData(data.split(" ")) match {
-        case (o,l,p,ls,ps,fs) => WordNetDataItem(o,l,p,ls,ps,fs,gloss)
+        case (o,l,p,ls,ps,fs) => WordNetDataItem(o,l,p,ls,ps,fs,gloss.trim())
       }
     }
     case Array(data) => {

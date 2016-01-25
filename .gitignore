@@ -18,3 +18,7 @@ project/plugins/project/
 
 # Don't commit default output
 wn31.xml
+defs-*
+
+# VIM
+*.swp
