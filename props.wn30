@@ -1,0 +1,9 @@
+folder=/home/jmccrae/Downloads/WordNet-3.0/dict/
+iliRef=../ili/ili-map.ttl
+id=wn30
+label=Princeton WordNet
+language=en
+email=fellbaum@princeton.edu
+license=http://wordnet.princeton.edu/wordnet/license/
+version=3.0
+url=http://wordnet.princeton.edu/

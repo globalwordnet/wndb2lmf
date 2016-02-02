@@ -4,24 +4,24 @@ import scala.io.{Source}
 import scala.xml.{NodeSeq,Elem,Null,TopScope,PrefixedAttribute}
 import java.net.URLEncoder
 import java.io.{PrintWriter,File}
-import org.apache.commons.lang3.StringEscapeUtils.{escapeXml10 => escapeXml}
+import java.util.Properties
+import org.apache.commons.lang3.StringEscapeUtils.{escapeXml10 => escapeXml, escapeJava}
 
 object wordnet2lemon {
 
   def main(args : Array[String]) {
-    val wnFolder = if(args.length == 0) {
-      "/home/jmccrae/Downloads/dict/"
-//      "/home/jmccrae/Downloads/WordNet-3.0/dict/"
+    val (propsFile, output) = if(args.length == 2) {
+      (args(0), args(1))
     } else {
-      args(0)
+      ("props", "wn31.xml")
     }
 
-    val (wnid, title, language, iliRef, output) = if(args.length == 5) {
-      (args(0), args(1), args(2), args(3), args(4))
-    } else {
-      ("wn31", "WordNet", "en", "../ili/ili-wn31.ttl", "wn31.xml")
-    }
 
+    val props = new java.util.Properties()
+    props.load(new java.io.FileReader(propsFile))
+
+    val wnFolder = props.getProperty("folder")
+    val iliRef = props.getProperty("iliRef")
     
     def words(pos : String) : Iterator[WordNetDataItem] = if(new File(wnFolder+"data."+pos).exists) {
       for(line <- Source.fromFile(wnFolder+"data."+pos).getLines() if !(line matches "\\s+.*")) yield {
@@ -41,13 +41,8 @@ object wordnet2lemon {
     
     val items = words("verb").toSeq ++ words("noun").toSeq ++ words("adj").toSeq ++ words("adv").toSeq
     
-    //println("Building satellites")
-    //val satellites = buildSatellites(items)
-    //println("Done with satellites")
-
-    //val senseIdx = buildIndex(items, satellites)
     val out = new PrintWriter(output)
-    buildLMF(out, items, wnid, title, language, sentences, iliMap)
+    buildLMF(out, items, props, sentences, iliMap)
     out.flush
     out.close
 
@@ -63,29 +58,22 @@ object wordnet2lemon {
     }).flatten.toSeq.groupBy(_._1)
   }
 
-  def buildSatellites(items : Seq[WordNetDataItem]) = {
-    val it2 = items.filter(_.pos == Adjective)
-    (for(item <- it2) yield {
-      item.offset -> (item.lemmas(0).lemma, item.lexNo)
-    }).toMap
-  }
-
-
-  def buildIndex(items : Seq[WordNetDataItem], satellites : Map[Int,(String,Int)]) = (
-    for(item <- items ; word <- item.lemmas) yield {
-      Seq((item.offset + ":" + item.pos.shortForm + ":" + word.synNo) -> word.senseIdxEscaped(satellites),
-         (item.offset + "/" + item.pos.shortForm + "/" + word.synNo) -> (urlencode(word.lemma) + ":" + item.pos.shortForm))
-    }
-  ).flatten.toMap
-
-  def buildLMF(out : PrintWriter, items : Seq[WordNetDataItem], id : String, 
-    label : String, language : String, sentences : Map[Int, String],
+  def buildLMF(out : PrintWriter, items : Seq[WordNetDataItem], 
+    props : Properties, sentences : Map[Int, String],
     ili : Map[(Int, String), String]) {
-    out.print(s"""<LexicalResource>
-  <Lexicon id="$id" label="$label" language="$language">""")
+    out.print(s"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE LexicalResource SYSTEM "http://globalwordnet.github.io/schemas/WN-LMF-1.0.dtd">
+<LexicalResource xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <Lexicon id="${props.getProperty("id")}" 
+           label="${props.getProperty("label")}" 
+           language="${props.getProperty("language")}"
+           email="${props.getProperty("email")}"
+           license="${props.getProperty("license")}"
+           version="${props.getProperty("version")}"
+           url="${props.getProperty("url")}">""")
 
-    buildEntries(out, items, id, sentences)
-    buildSynsets(out, items, id, language, ili)
+    buildEntries(out, items, props.getProperty("id"), sentences)
+    buildSynsets(out, items, props.getProperty("id"), props.getProperty("language"), ili)
 out.println("""  </Lexicon>
 </LexicalResource>""")
   }
@@ -107,7 +95,7 @@ out.println("""  </Lexicon>
       val lemma = lemma_key.dropRight(2)
       val pos = items(0).pos 
       out.print(s"""
-    <LexicalEntry id="${urlencode(id + "-" + lemma_key)}">
+    <LexicalEntry id="${id + "-" + escapeJava(lemma_key.replace(" ", "_").replace("'", "-ap-").replace("(","-lb-").replace(")","-rb-").replace("/","-sl-"))}">
       <Lemma writtenForm="${escapeXml(lemma)}" partOfSpeech="${pos.shortForm}"/>""")
       for(WordNetDataItem(offset, lexNo, pos, lemmas, pointers, frames, gloss) <- items) {
         val word = lemmas.find(_.lemma == lemma).get
@@ -139,14 +127,20 @@ out.println("""  </Lexicon>
         case Some(id) =>
           id
         case None =>
-          System.err.println("new,,,%08d-%s,%s" format (offset, pos.shortForm, lemmas.map(_.lemma).mkString("/")))
+//          System.err.println("new,,,%08d-%s,%s" format (offset, pos.shortForm, lemmas.map(_.lemma).mkString("/")))
           "in"
       }
       out.print(s"""
     <Synset id="${"%s-%08d-%s" format (id, offset, pos.shortForm)}"
             ili="${iliId}">
-      <Definition gloss="${escapeXml(gloss)}" iliDef=\"${if(iliId == "in") { escapeXml(gloss) } else { "" }}\"/>""")
-         
+            <Definition>${escapeXml(gloss)}</Definition>""")
+      if(iliId == "in") {
+        if(gloss.length < 20 && gloss.split(" ").length < 5) {
+          System.err.println("Too short: " + gloss)
+        }
+        out.print(s"""
+            <ILIDefinition>${escapeXml(gloss)}</ILIDefinition>""")
+      }
         for(Pointer(typ, targetOffset, pos, src, trg) <- pointers if typ.semantic && src == 0 && trg == 0) yield {
           out.print(s"""
       <SynsetRelation target="${"%s-%08d-%s" format (id, targetOffset, pos.shortForm)}"
@@ -168,10 +162,16 @@ out.println("""  </Lexicon>
     }).toMap
   }
 
+  val iliIdType1 = "ili:(i\\d+)".r
+  val iliIdType2 = "<(i\\d+)>".r
+
   def loadILIMap(fileName : String) : Map[(Int, String), String] = {
-    (io.Source.fromFile(fileName).getLines.drop(5).flatMap { line =>
+    (io.Source.fromFile(fileName).getLines.filter(_.contains("owl:sameAs")).flatMap { line =>
       val elems = line.split("\\s+")
-      val ili = elems(0).drop(4)
+      val ili = elems(0) match {
+        case iliIdType1(id) => id
+        case iliIdType2(id) => id
+      }
       val offset = elems(2).drop(7).dropRight(2).toInt
       val pos = elems(2).takeRight(1)
       if(elems(1) == "owl:sameAs") {
