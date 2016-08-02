@@ -1,2 +1,5 @@
 # wndb2lmf
-Convert WordNet Database format to ILI LMF
+
+This project is no longer maintained. Please use
+
+https://github.com/jmccrae/gwn-scala-api
